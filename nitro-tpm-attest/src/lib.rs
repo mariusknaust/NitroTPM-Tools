@@ -1,0 +1,52 @@
+//! Abstraction for the TPM2 AWS NSM Vendor Command
+//!
+//! Provides a high-level interface for the TPM2 AWS vendor command that is used to send NSM
+//! attestation requests.
+
+pub mod raw;
+pub mod tpm_manager;
+pub mod tss;
+
+pub use aws_nitro_enclaves_nsm_api::api as nsm_api;
+use tpm_manager::TpmManager;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("invalid NSM response")]
+    InvalidNsmResponse,
+    #[error("NSM error response: {0:?}")]
+    NsmErrorResponse(nsm_api::ErrorCode),
+    #[error(transparent)]
+    MessageBuffer(#[from] tss::message_buffer::Error),
+    #[error(transparent)]
+    NsmRequest(#[from] raw::nsm_request::Error),
+    #[error(transparent)]
+    Tss(#[from] tss_esapi::Error),
+}
+
+/// Request a NitroTPM attestation document
+pub fn attestation_document(
+    user_data: Option<Vec<u8>>,
+    nonce: Option<Vec<u8>>,
+    public_key: Option<Vec<u8>>,
+) -> Result<Vec<u8>, Error> {
+    let nsm_request = nsm_api::Request::Attestation {
+        user_data: user_data.map(Into::into),
+        nonce: nonce.map(Into::into),
+        public_key: public_key.map(Into::into),
+    };
+
+    let tpm_device_path =
+        std::path::PathBuf::from(std::env::var_os("TPM_DEVICE").unwrap_or("/dev/tpm0".into()));
+    let tpm_manager = std::cell::RefCell::new(TpmManager::new(tpm_device_path));
+
+    let message_buffer = tss::MessageBuffer::from_request(&tpm_manager, nsm_request)?;
+
+    raw::nsm_request(&tpm_manager, message_buffer.index())?;
+
+    match message_buffer.into_response()? {
+        nsm_api::Response::Attestation { document } => Ok(document),
+        nsm_api::Response::Error(error_code) => Err(Error::NsmErrorResponse(error_code)),
+        _ => Err(Error::InvalidNsmResponse),
+    }
+}

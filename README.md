@@ -1,17 +1,9 @@
-## My Project
+# NitroTPM Tools
 
-TODO: Fill this README out!
+A collection of utilities for working with NitroTPM attestation.
 
-Be sure to:
+## Tools
 
-* Change the title in this README
-* Edit your repository description on GitHub
+- `nitro-tpm-attest`: A utility for requesting attestation documents from NitroTPM
 
-## Security
-
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
-
-## License
-
-This project is licensed under the Apache-2.0 License.
-
+For more information about each tool, see the respective README files.

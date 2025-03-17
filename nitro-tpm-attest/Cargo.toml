@@ -1,0 +1,31 @@
+[package]
+name = "nitro-tpm-attest"
+version = "1.0.0"
+edition = "2024"
+authors = ["Marius Knaust <mknaust@amazon.com>"]
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0"
+aws-nitro-enclaves-nsm-api = "0.4"
+ciborium = "0.2"
+clap = { version = "4.5", features = ["derive"] }
+serde = "1.0"
+serde_bytes = "0.11"
+thiserror = "2.0"
+tss-esapi = "7.6"
+tss-esapi-sys = "0.5"
+
+[build-dependencies]
+semver = "1.0"
+
+[dev-dependencies]
+aws-config = "1.5"
+aws-sdk-kms = "1.50"
+base64ct = { version = "1.7", features = ["alloc"] }
+openssl = "0.10"
+tokio = { version = "1", features = ["full"] }
+
+[[example]]
+name = "nitro-tpm-kms-decrypt"
+path = "examples/kms_decrypt.rs"

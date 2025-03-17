@@ -1,0 +1,3 @@
+[workspace]
+members = ["nitro-tpm-attest"]
+resolver = "2"
