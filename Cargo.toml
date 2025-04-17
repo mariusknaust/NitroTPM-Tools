@@ -1,3 +1,3 @@
 [workspace]
-members = ["nitro-tpm-attest"]
+members = ["nitro-tpm-attest", "nitro-tpm-pcr-compute"]
 resolver = "2"
