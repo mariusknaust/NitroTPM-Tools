@@ -1,4 +1,5 @@
 mod build_info;
+mod esl;
 mod hasher;
 mod pcr;
 
@@ -15,6 +16,68 @@ struct Arguments {
     /// When multiple images are provided, the argument order has to match the load order.
     #[arg(long, short)]
     image: Vec<std::path::PathBuf>,
+    #[command(flatten)]
+    secure_boot: SecureBootArguments,
+}
+
+#[derive(clap::Parser)]
+struct SecureBootArguments {
+    /// Path of the platform key (PK) database file
+    #[arg(long = "PK")]
+    platform_key: Option<std::path::PathBuf>,
+    /// Path of the key exchange key (KEK) database file
+    #[arg(long = "KEK")]
+    key_exchange_key: Option<std::path::PathBuf>,
+    /// Path of the signature (db) database file
+    #[arg(long = "db")]
+    signature_database: Option<std::path::PathBuf>,
+    /// Path of the signature denylist (dbx) database file
+    #[arg(long = "dbx")]
+    signature_denylist_database: Option<std::path::PathBuf>,
+}
+
+impl SecureBootArguments {
+    fn secure_boot_enabled(&self) -> bool {
+        // https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-uefi-secure-boot-works.html
+        // When the PK is set, UEFI Secure Boot is enabled and the SetupMode is exited.
+        self.platform_key.is_some()
+    }
+
+    fn secure_boot(&self) -> [u8; 1] {
+        [self.secure_boot_enabled() as u8; 1]
+    }
+
+    fn platform_key(&self) -> Result<Vec<u8>, std::io::Error> {
+        self.platform_key
+            .as_ref()
+            .map(std::fs::read)
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    fn key_exchange_key(&self) -> Result<Vec<u8>, std::io::Error> {
+        self.key_exchange_key
+            .as_ref()
+            .map(std::fs::read)
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    fn signature_database(&self) -> Result<Vec<u8>, std::io::Error> {
+        self.signature_database
+            .as_ref()
+            .map(std::fs::read)
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    fn signature_denylist_database(&self) -> Result<Vec<u8>, std::io::Error> {
+        self.signature_denylist_database
+            .as_ref()
+            .map(std::fs::read)
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -43,7 +106,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut build_info = BuildInfo::new(ALGORITHM);
 
-    build_info.add_measurement(4, pcr4(ALGORITHM, &images)?);
+    build_info.add_measurement(4, pcr4(ALGORITHM, &arguments.secure_boot, &images)?);
+    build_info.add_measurement(7, pcr7(ALGORITHM, &arguments.secure_boot, &images)?);
 
     println!("{build_info}");
 
@@ -54,6 +118,7 @@ fn main() -> anyhow::Result<()> {
 /// 3.3.4.5 PCR[4] – Boot Manager Code and Boot Attempts
 fn pcr4<'a, Image>(
     algorithm: &'static aws_lc_rs::digest::Algorithm,
+    secure_boot_arguments: &SecureBootArguments,
     images: &'a [Image],
 ) -> anyhow::Result<aws_lc_rs::digest::Digest>
 where
@@ -105,7 +170,11 @@ where
             let skip_kernel_measurement =
                     // https://github.com/systemd/systemd/pull/37372
                     // Systemd-stub version 258 starts to load and run the kernel image directly
-                    stub_major_version >= 258;
+                    stub_major_version >= 258
+                    // https://github.com/systemd/systemd/pull/24777
+                    // Systemd-stub version 252 starts to bypasses the security protocol to allow
+                    // loading unsigned kernel images
+                    || stub_major_version >= 252 && secure_boot_arguments.secure_boot_enabled();
 
             if skip_kernel_measurement {
                 continue;
@@ -124,8 +193,192 @@ where
     Ok(pcr4.into())
 }
 
+/// TCG PC Client Platform Firmware Profile Specification
+/// 3.3.4.8 PCR[7] – Secure Boot Policy Measurements
+fn pcr7<'a, Image>(
+    algorithm: &'static aws_lc_rs::digest::Algorithm,
+    secure_boot_arguments: &SecureBootArguments,
+    images: &'a [Image],
+) -> anyhow::Result<aws_lc_rs::digest::Digest>
+where
+    Image: object::Object<'a> + authenticode::PeTrait,
+{
+    const EFI_GLOBAL_VARIABLE_GUID: uuid::Uuid =
+        uuid::uuid!("8be4df61-93ca-11d2-aa0d-00e098032b8c");
+    const IMAGE_SECURITY_DATABASE_GUID: uuid::Uuid =
+        uuid::uuid!("d719b2cb-3d3a-4596-a3bc-dad00e67656f");
+    const EFI_CERT_X509_GUID: uuid::Uuid = uuid::uuid!("a5c059a1-94e4-4aa7-87b5-ab155c2bf072");
+
+    // 1. The contents of the SecureBoot variable
+    let secure_boot_hash = variable_hash(
+        algorithm,
+        &EFI_GLOBAL_VARIABLE_GUID,
+        "SecureBoot",
+        &secure_boot_arguments.secure_boot(),
+    );
+
+    log::debug!("[PCR7] EV_EFI_VARIABLE_DRIVER_CONFIG: {secure_boot_hash:?}");
+    let mut pcr7 = Pcr::new(algorithm, &secure_boot_hash);
+
+    // 2. The contents of the PK variable
+    let pk_hash = variable_hash(
+        algorithm,
+        &EFI_GLOBAL_VARIABLE_GUID,
+        "PK",
+        &secure_boot_arguments.platform_key()?,
+    );
+
+    log::debug!("[PCR7] EV_EFI_VARIABLE_DRIVER_CONFIG: {pk_hash:?}");
+    pcr7.extend(&pk_hash);
+
+    // 3. The contents of the KEK variable
+    let kek_hash = variable_hash(
+        algorithm,
+        &EFI_GLOBAL_VARIABLE_GUID,
+        "KEK",
+        &secure_boot_arguments.key_exchange_key()?,
+    );
+
+    log::debug!("[PCR7] EV_EFI_VARIABLE_DRIVER_CONFIG: {kek_hash:?}");
+    pcr7.extend(&kek_hash);
+
+    // 4. The contents of the UEFI_IMAGE_SECURITY_DATABASE_GUID /EFI_IMAGE_SECURITY_DATABASE
+    // variable (the DB)
+    let signature_database = secure_boot_arguments.signature_database()?;
+    let db_hash = variable_hash(
+        algorithm,
+        &IMAGE_SECURITY_DATABASE_GUID,
+        "db",
+        &signature_database,
+    );
+
+    log::debug!("[PCR7] EV_EFI_VARIABLE_DRIVER_CONFIG: {db_hash:?}");
+    pcr7.extend(&db_hash);
+
+    // 5. The contents of the UEFI_IMAGE_SECURITY_DATABASE_GUID /EFI_IMAGE_SECURITY_DATABASE1
+    // variable (the DBX)
+    let dbx_hash = variable_hash(
+        algorithm,
+        &IMAGE_SECURITY_DATABASE_GUID,
+        "dbx",
+        &secure_boot_arguments.signature_denylist_database()?,
+    );
+
+    log::debug!("[PCR7] EV_EFI_VARIABLE_DRIVER_CONFIG: {dbx_hash:?}");
+    pcr7.extend(&dbx_hash);
+
+    // The system SHALL measure the EV_SEPARATOR event in PCR[7]
+    let seperator_hash = seperator_hash(algorithm);
+
+    log::debug!("[PCR7] EV_SEPARATOR: {seperator_hash:?}");
+    pcr7.extend(&seperator_hash);
+
+    // The EV_EFI_VARIABLE_AUTHORITY measurement in step 6 is not required if the value of the
+    // SecureBoot variable is 00h (off).
+    if !secure_boot_arguments.secure_boot_enabled() {
+        return Ok(pcr7.into());
+    }
+
+    // the UEFI firmware SHALL determine if the entry in the UEFI_IMAGE_SECURITY_DATABASE_GUID/
+    // EFI_IMAGE_SECURITY_DATABASE variable that was used to validate the UEFI image has previously
+    // been measured in PCR[7]. If it has not been, it MUST be measured into PCR[7]. If it has been
+    // measured previously, it MUST NOT be measured again.
+    let efi_signature_data = esl::try_from(&signature_database)
+        .context("Could not parse signature database file")?
+        .into_iter()
+        // We only support X.509 certificates
+        .filter(|efi_signature_list| efi_signature_list.signature_type == EFI_CERT_X509_GUID)
+        .flat_map(|efi_signature_list| efi_signature_list.signatures.into_iter())
+        .collect::<Vec<_>>();
+
+    let mut seen_efi_signature_data = std::collections::HashSet::new();
+    let measured_efi_signature_data = images
+        .iter()
+        .map(|image| {
+            // Look for a matching image signature
+            authenticode::AttributeCertificateIterator::new(image)?
+                .into_iter()
+                .flatten()
+                .map(|attribute_certificate| {
+                    // Walk the certificate chain
+                    Ok::<_, anyhow::Error>(
+                        attribute_certificate?
+                            .get_authenticode_signature()?
+                            .certificates()
+                            .map(x509_cert::der::Encode::to_der)
+                            .find_map(|certificate| {
+                                // Look up the certificate in the signature database
+                                // Note: This does not validate the signature, validation is left to
+                                // secure boot. Same is true for exclusions of items from the signature
+                                // deny list.
+                                certificate
+                                    .map(|certificate| {
+                                        efi_signature_data.iter().find(|efi_signature_data| {
+                                            certificate == efi_signature_data.signature_data
+                                        })
+                                    })
+                                    .transpose()
+                            })
+                            .transpose()?,
+                    )
+                })
+                .find_map(Result::transpose)
+                .transpose()
+        })
+        .filter_map(Result::transpose)
+        .filter(|efi_signature_data| {
+            efi_signature_data
+                .as_ref()
+                .map(|efi_signature_data| seen_efi_signature_data.insert(*efi_signature_data))
+                .unwrap_or(true)
+        });
+
+    for efi_signature_data in measured_efi_signature_data {
+        let efi_signature_data = efi_signature_data?;
+        let efi_signature_data_hash = variable_hash(
+            algorithm,
+            &IMAGE_SECURITY_DATABASE_GUID,
+            "db",
+            &[
+                efi_signature_data.signature_owner.to_bytes_le().as_slice(),
+                efi_signature_data.signature_data.as_slice(),
+            ]
+            .concat(),
+        );
+
+        log::debug!("[PCR7] EV_EFI_VARIABLE_AUTHORITY: {efi_signature_data_hash:?}");
+        pcr7.extend(&efi_signature_data_hash);
+    }
+
+    Ok(pcr7.into())
+}
+
 fn seperator_hash(algorithm: &'static aws_lc_rs::digest::Algorithm) -> aws_lc_rs::digest::Digest {
     aws_lc_rs::digest::digest(algorithm, &[0u8; 4])
+}
+
+fn variable_hash(
+    algorithm: &'static aws_lc_rs::digest::Algorithm,
+    uuid: &uuid::Uuid,
+    variable_name: &str,
+    data: &[u8],
+) -> aws_lc_rs::digest::Digest {
+    let variable_name_utf16_bytes: Vec<u8> = variable_name
+        .encode_utf16()
+        .flat_map(|character| character.to_le_bytes())
+        .collect();
+
+    aws_lc_rs::digest::digest(
+        algorithm,
+        &[
+            uuid.to_bytes_le().as_slice(),
+            variable_name.len().to_le_bytes().as_slice(),
+            (data.len() as u64).to_le_bytes().as_slice(),
+            variable_name_utf16_bytes.as_slice(),
+            data,
+        ]
+        .concat(),
+    )
 }
 
 fn pe_hash(
