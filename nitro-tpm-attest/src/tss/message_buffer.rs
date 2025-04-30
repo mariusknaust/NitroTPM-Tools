@@ -22,6 +22,7 @@ pub enum Error {
 pub(crate) struct MessageBuffer<'a> {
     tpm_manager: &'a std::cell::RefCell<crate::TpmManager>,
     nv_index_tpm_handle: tss_esapi::handles::NvIndexTpmHandle,
+    salt_key_tpm_handle: tss_esapi::handles::TpmHandle,
     nv_index_auth: tss_esapi::structures::Auth,
 }
 
@@ -30,6 +31,7 @@ impl<'a> MessageBuffer<'a> {
     /// request was written to it) alongside the buffer itself
     pub(crate) fn from_request(
         tpm_manager: &'a std::cell::RefCell<crate::TpmManager>,
+        salt_key_tpm_handle: tss_esapi::handles::TpmHandle,
         nsm_request: nsm_api::Request,
     ) -> Result<(Self, tss_esapi::structures::Name), Error> {
         // The plain attestation document (without any optional parameters) will be almost 5 KiB and
@@ -66,7 +68,7 @@ impl<'a> MessageBuffer<'a> {
             .with_data_area_size(SIZE)
             .build()?;
 
-        let name = context.execute_with_nullauth_session(|context| {
+        let name = context.execute_with_salted_auth_session(salt_key_tpm_handle, |context| {
             let nv_index_handle = context.nv_define_space(
                 tss_esapi::interface_types::resource_handles::Provision::Owner,
                 Some(nv_index_auth.clone()),
@@ -96,6 +98,7 @@ impl<'a> MessageBuffer<'a> {
             Self {
                 tpm_manager,
                 nv_index_tpm_handle,
+                salt_key_tpm_handle,
                 nv_index_auth,
             },
             name,
@@ -107,7 +110,7 @@ impl<'a> MessageBuffer<'a> {
         self.tpm_manager
             .borrow_mut()
             .tss()?
-            .execute_with_nullauth_session(|context| {
+            .execute_with_salted_auth_session(self.salt_key_tpm_handle, |context| {
                 let nv_index_handle =
                     context.tr_from_tpm_public(self.nv_index_tpm_handle.into())?;
 
