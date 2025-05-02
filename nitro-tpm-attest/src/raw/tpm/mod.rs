@@ -31,13 +31,13 @@ impl Tpm {
     pub(super) fn nsm_request(
         &mut self,
         nv_index: tss_esapi::handles::NvIndexTpmHandle,
+        auth: &tss_esapi::structures::Auth,
     ) -> Result<(), Error> {
         // 19.4 Password Authorizations
         let nonce_caller = tss_esapi::structures::Nonce::default();
         let (session_attributes, _) =
             tss_esapi::attributes::session::SessionAttributes::builder().build();
         let session_attributes = tss_esapi::tss2_esys::TPMA_SESSION::from(session_attributes);
-        let auth = tss_esapi::structures::Auth::default();
         let auth_area = [
             tss_esapi::constants::tss::TPM2_RS_PW
                 .to_be_bytes()
@@ -46,7 +46,7 @@ impl Tpm {
             &nonce_caller,
             &session_attributes.to_be_bytes(),
             &(auth.len() as u16).to_be_bytes(),
-            &auth,
+            auth,
         ]
         .concat();
 
@@ -55,7 +55,7 @@ impl Tpm {
             TPM2_VENDOR_AWS_NSM_REQUEST,
         )
         // Handles
-        .add_u32(tss_esapi::constants::tss::TPM2_RH_OWNER) // NV auth
+        .add_u32(nv_index) // NV auth
         .add_u32(nv_index) // NV index
         // Auth area
         .add_auth_area(&auth_area)

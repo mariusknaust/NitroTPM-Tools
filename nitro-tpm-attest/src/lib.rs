@@ -42,7 +42,7 @@ pub fn attestation_document(
 
     let message_buffer = tss::MessageBuffer::from_request(&tpm_manager, nsm_request)?;
 
-    raw::nsm_request(&tpm_manager, message_buffer.index())?;
+    raw::nsm_request(&tpm_manager, message_buffer.index(), message_buffer.auth())?;
 
     match message_buffer.into_response()? {
         nsm_api::Response::Attestation { document } => Ok(document),

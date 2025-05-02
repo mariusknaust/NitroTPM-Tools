@@ -14,12 +14,15 @@ pub enum Error {
     #[error(transparent)]
     Deserialization(#[from] ciborium::de::Error<std::io::Error>),
     #[error(transparent)]
+    AwsLc(#[from] aws_lc_rs::error::Unspecified),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
 pub(crate) struct MessageBuffer<'a> {
     tpm_manager: &'a std::cell::RefCell<crate::TpmManager>,
     nv_index_tpm_handle: tss_esapi::handles::NvIndexTpmHandle,
+    nv_index_auth: tss_esapi::structures::Auth,
 }
 
 impl<'a> MessageBuffer<'a> {
@@ -31,6 +34,12 @@ impl<'a> MessageBuffer<'a> {
         // The plain attestation document (without any optional parameters) will be almost 5 KiB and
         // the optional parameters are each limited to 1 KiB
         const SIZE: usize = 8192;
+
+        let mut nv_index_auth = vec![0u8; tss_esapi::structures::Auth::MAX_SIZE];
+
+        aws_lc_rs::rand::fill(&mut nv_index_auth)?;
+
+        let nv_index_auth = tss_esapi::structures::Auth::try_from(nv_index_auth)?;
 
         let mut tpm_manager_ref = tpm_manager.borrow_mut();
         let context = tpm_manager_ref.tss()?;
@@ -44,8 +53,8 @@ impl<'a> MessageBuffer<'a> {
         )?;
 
         let nv_index_attributes = tss_esapi::attributes::nv_index::NvIndexAttributes::builder()
-            .with_owner_read(true)
-            .with_owner_write(true)
+            .with_auth_read(true)
+            .with_auth_write(true)
             .build()?;
         let nv_public = tss_esapi::structures::NvPublic::builder()
             .with_nv_index(nv_index_tpm_handle)
@@ -57,9 +66,9 @@ impl<'a> MessageBuffer<'a> {
             .build()?;
 
         context.execute_with_nullauth_session(|context| {
-            context.nv_define_space(
+            let nv_index_handle = context.nv_define_space(
                 tss_esapi::interface_types::resource_handles::Provision::Owner,
-                None,
+                Some(nv_index_auth.clone()),
                 nv_public,
             )?;
 
@@ -67,7 +76,9 @@ impl<'a> MessageBuffer<'a> {
                 &nsm_request,
                 &mut tss_esapi::abstraction::nv::NvOpenOptions::ExistingIndex {
                     nv_index_handle: nv_index_tpm_handle,
-                    auth_handle: tss_esapi::interface_types::resource_handles::NvAuth::Owner,
+                    auth_handle: tss_esapi::interface_types::resource_handles::NvAuth::NvIndex(
+                        nv_index_handle,
+                    ),
                 }
                 .open(context)?,
             )?;
@@ -78,6 +89,7 @@ impl<'a> MessageBuffer<'a> {
         Ok(Self {
             tpm_manager,
             nv_index_tpm_handle,
+            nv_index_auth,
         })
     }
 
@@ -87,10 +99,17 @@ impl<'a> MessageBuffer<'a> {
             .borrow_mut()
             .tss()?
             .execute_with_nullauth_session(|context| {
+                let nv_index_handle =
+                    context.tr_from_tpm_public(self.nv_index_tpm_handle.into())?;
+
+                context.tr_set_auth(nv_index_handle, self.nv_index_auth.clone())?;
+
                 Ok(ciborium::from_reader(
                     tss_esapi::abstraction::nv::NvOpenOptions::ExistingIndex {
                         nv_index_handle: self.nv_index_tpm_handle,
-                        auth_handle: tss_esapi::interface_types::resource_handles::NvAuth::Owner,
+                        auth_handle: tss_esapi::interface_types::resource_handles::NvAuth::NvIndex(
+                            nv_index_handle.into(),
+                        ),
                     }
                     .open(context)?,
                 )?)
@@ -99,6 +118,10 @@ impl<'a> MessageBuffer<'a> {
 
     pub(crate) fn index(&self) -> tss_esapi::handles::NvIndexTpmHandle {
         self.nv_index_tpm_handle
+    }
+
+    pub(crate) fn auth(&self) -> &tss_esapi::structures::Auth {
+        &self.nv_index_auth
     }
 }
 
