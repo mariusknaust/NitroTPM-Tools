@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Persists the endorsement key handle, so it is not flushed by tss-esapi-rs and is usable by the
 //! raw command
 

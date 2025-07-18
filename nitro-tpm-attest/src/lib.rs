@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Abstraction for the TPM2 AWS NSM Vendor Command
 //!
 //! Provides a high-level interface for the TPM2 AWS vendor command that is used to send NSM

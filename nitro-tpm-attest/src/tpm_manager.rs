@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! While the TSS is used wherever possible, it is required to interact with the raw TPM device in
 //! order to send the NSM vendor command. This means the TSS context (which keeps the TPM device
 //! open) has to be closed and recreated afterwards. The TPM manager handles these two modes.

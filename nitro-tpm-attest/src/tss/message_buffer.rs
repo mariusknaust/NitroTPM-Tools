@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 use super::ContextExtension as _;
 use aws_nitro_enclaves_nsm_api::api as nsm_api;
 

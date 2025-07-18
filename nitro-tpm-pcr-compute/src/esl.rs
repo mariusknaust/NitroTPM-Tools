@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 pub fn try_from(mut data: &[u8]) -> Option<std::vec::Vec<EfiSignatureList>> {
     let mut efi_signature_lists = std::vec::Vec::new();
 

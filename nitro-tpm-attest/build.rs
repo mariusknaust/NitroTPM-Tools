@@ -1,3 +1,6 @@
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 fn main() {
     // While tss-esapi 7.6 supports a minimum TSS version of 2.4.6, behavior between major version
     // differs significantly
