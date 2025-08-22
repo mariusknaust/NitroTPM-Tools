@@ -155,6 +155,16 @@ where
         // https://uapi-group.org/specifications/specs/unified_kernel_image/
         // Only the .linux section is required for the image to be considered a Unified Kernel Image
         if let Some(linux_section) = linux_section {
+            let al2023_stub_major_version = object::Object::section_by_name(image, ".osrel")
+                .as_ref()
+                .map(object::ObjectSection::data)
+                .transpose()?
+                .map(std::str::from_utf8)
+                .transpose()?
+                .filter(|osrel| {
+                    osrel.contains("NAME=\"Amazon Linux\"") && osrel.contains("VERSION=\"2023\"")
+                })
+                .map(|_| 252);
             let stub_major_version = object::Object::section_by_name(image, ".sdmagic")
                 .context("Could not find .sdmagic section of UKI")
                 .and_then(|sdmagic| {
@@ -169,7 +179,9 @@ where
                         })
                         .context("Unexpected .sdmagic section format")?
                         .parse::<u32>()?)
-                })?;
+                })
+                // AL2023 on aarch64 UKIs currently come without the .sdmagic section
+                .or_else(|error| al2023_stub_major_version.ok_or(error))?;
             let skip_kernel_measurement =
                     // https://github.com/systemd/systemd/pull/37372
                     // Systemd-stub version 258 starts to load and run the kernel image directly
