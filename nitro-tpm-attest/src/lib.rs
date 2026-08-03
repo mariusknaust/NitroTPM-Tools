@@ -22,6 +22,11 @@ pub use aws_nitro_enclaves_nsm_api::api as nsm_api;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error(
+        "an attestation document takes up to {required} bytes, but the TPM holds at most \
+         {available} per NV index, so EC2 instance attestation is not supported on this TPM"
+    )]
+    NvIndexSizeInsufficient { required: usize, available: usize },
     #[error("invalid NSM response")]
     InvalidNsmResponse,
     #[error("NSM error response: {0:?}")]
@@ -109,6 +114,20 @@ pub fn attestation_document(
             device_path: tpm_resource_manager_device_path.clone(),
             source,
         })?;
+
+    let available = context
+        .get_tpm_property(tss_esapi::constants::property_tag::PropertyTag::NvIndexMax)?
+        .and_then(|nv_index_max| usize::try_from(nv_index_max).ok())
+        .ok_or(tss_esapi::Error::WrapperError(
+            tss_esapi::WrapperErrorKind::WrongValueFromTpm,
+        ))?;
+
+    if available < tss::message_buffer::SIZE {
+        return Err(Error::NvIndexSizeInsufficient {
+            required: tss::message_buffer::SIZE,
+            available,
+        });
+    }
 
     context.execute_with_password_auth_session(|context| {
         let message_buffer = tss::MessageBuffer::from_request(context, &nsm_request)?;
