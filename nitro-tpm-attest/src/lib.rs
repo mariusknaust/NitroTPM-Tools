@@ -140,9 +140,9 @@ pub fn attestation_document(
             tss_esapi::WrapperErrorKind::WrongValueFromTpm,
         ))?;
 
-    if available < tss::message_buffer::SIZE {
+    if available < tss::message_buffer::MAX_SIZE {
         return Err(Error::NvIndexSizeInsufficient {
-            required: tss::message_buffer::SIZE,
+            required: tss::message_buffer::MAX_SIZE,
             available,
         });
     }
