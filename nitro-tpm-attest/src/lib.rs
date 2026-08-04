@@ -47,6 +47,36 @@ pub enum Error {
 }
 
 impl Error {
+    /// Whether another attestation held what this one needed, so that a later attempt can succeed
+    /// once that one released it
+    ///
+    /// An attestation holds an NV index for its duration, and it holds the TPM device itself where
+    /// the resource manager does not carry the vendor command. A TPM has little NV memory to spare
+    /// and the device admits a single user, so attestations running next to each other run out of
+    /// both. Retrying is left to the caller, which knows how long it can afford to wait, but it takes
+    /// this to tell the case apart from a failure that will not pass.
+    #[must_use]
+    pub fn is_temporarily_unavailable(&self) -> bool {
+        // The device is exclusive, so a concurrent attestation holding it is reported as busy
+        if let Self::Open(OpenError {
+            source: OpenErrorKind::Tpm(raw::Error::Io(error)),
+            ..
+        }) = self
+        {
+            return error.kind() == std::io::ErrorKind::ResourceBusy;
+        }
+
+        matches!(
+            self,
+            Self::MessageBuffer(tss::message_buffer::Error::Tss(
+                tss_esapi::Error::Tss2Error(response_code)
+            ))
+            | Self::Tss(tss_esapi::Error::Tss2Error(response_code))
+                if response_code.kind()
+                    == Some(tss_esapi::constants::response_code::Tss2ResponseCodeKind::NvSpace)
+        )
+    }
+
     /// Whether a transport rejected the vendor command as unsupported, without the TPM seeing it
     fn is_unsupported_command(&self) -> bool {
         let Self::NsmRequest(raw::Error::TpmErrorResponse(response_code)) = self else {

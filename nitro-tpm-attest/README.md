@@ -70,6 +70,33 @@ openssl cms \
     -in <(base64 --decode <<< "$plaintext_cms")
 ```
 
+### Retrying a request the TPM had no room for
+
+An attestation holds an NV index in the TPM for its duration, and, on an older kernel whose resource manager does not carry the vendor command, the TPM device itself. A TPM has little NV memory to spare and the device admits a single user, so requests running next to each other can run out of either. A request that failed for that reason reports a temporary failure, 75, and is worth repeating once another request released what it held. Every other failure exits with 1.
+
+```console
+for _ in $(seq 5); do
+    nitro-tpm-attest > attestation-document.bin && break
+    [ $? -eq 75 ] || exit 1
+    sleep 1
+done
+```
+
+A systemd service can key on the same code:
+
+```ini
+[Unit]
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/nitro-tpm-attest
+StandardOutput=file:/run/attestation-document.bin
+RestartForceExitStatus=TEMPFAIL
+RestartSec=1
+```
+
 ### TPM devices
 
 Both the TSS and the NSM vendor command go through the kernel resource manager, `/dev/tpmrm0`, which admits many users at a time. A kernel before 6.3 does not carry the vendor command there, so the vendor command falls back to `/dev/tpm0`, which admits a single user. Either path can be redirected:
