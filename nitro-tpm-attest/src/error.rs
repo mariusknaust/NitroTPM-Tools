@@ -65,6 +65,31 @@ impl Error {
         Self::Other(OtherError(OtherErrorKind::Tss(error)))
     }
 
+    /// Whether a retry might fix the failure, as when the TPM had no NV memory left for the request
+    /// or the TPM device was busy, most often because another attestation held them
+    ///
+    /// An attestation holds an NV index for its duration. Where the resource manager does not carry
+    /// the vendor command, it also holds the TPM device while that command runs. A TPM has little
+    /// NV memory to spare and the device admits a single user, so attestations running next to each
+    /// other can run out of either. Retrying is left to the caller, which knows how long it can
+    /// afford to wait, but it takes this to tell such a failure apart from any other.
+    #[must_use]
+    pub fn is_temporarily_unavailable(&self) -> bool {
+        // Only the TPM device admits a single user, so only there does busy mean another
+        // attestation holds it
+        if let Self::Open(OpenError {
+            transport: Transport::Device,
+            source: OpenErrorKind::Tpm(raw::Error::Io(error)),
+            ..
+        }) = self
+        {
+            return error.kind() == std::io::ErrorKind::ResourceBusy;
+        }
+
+        self.response_code_kind()
+            == Some(tss_esapi::constants::response_code::Tss2ResponseCodeKind::NvSpace)
+    }
+
     /// Whether the resource manager rejected the vendor command as unsupported, without the TPM
     /// seeing it
     pub(crate) fn is_unsupported_command(&self) -> bool {
@@ -82,6 +107,27 @@ impl Error {
         };
 
         response_code.0 == RESOURCE_MANAGER_COMMAND_CODE
+    }
+
+    /// The kind of the TPM response code of a failed TSS command, or none for any other error
+    ///
+    /// The reads and writes of the message buffer report their failures as I/O errors, so their
+    /// response codes are not seen here.
+    fn response_code_kind(
+        &self,
+    ) -> Option<tss_esapi::constants::response_code::Tss2ResponseCodeKind> {
+        let Self::Other(OtherError(kind)) = self else {
+            return None;
+        };
+        let (OtherErrorKind::Tss(tss_esapi::Error::Tss2Error(response_code))
+        | OtherErrorKind::MessageBuffer(tss::message_buffer::Error::Tss(
+            tss_esapi::Error::Tss2Error(response_code),
+        ))) = kind
+        else {
+            return None;
+        };
+
+        response_code.kind()
     }
 }
 
@@ -107,19 +153,38 @@ impl std::fmt::Display for AttestationParameter {
     }
 }
 
-/// Failure of opening a TPM transport, naming the device it was opened on
+/// Failure of opening a TPM transport, naming which one and its path
 #[derive(thiserror::Error, Debug)]
-#[error("could not open the TPM device {device_path:?}")]
+#[error("could not open the TPM {transport} {device_path:?}")]
 pub struct OpenError {
+    pub(crate) transport: Transport,
     pub(crate) device_path: std::path::PathBuf,
     pub(crate) source: OpenErrorKind,
 }
 
 impl OpenError {
-    /// Path of the TPM device that could not be opened
+    /// Path of the TPM transport that could not be opened
     #[must_use]
     pub fn device_path(&self) -> &std::path::Path {
         &self.device_path
+    }
+}
+
+/// Which TPM transport failed to open, as only the device is busy while another holds it
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Transport {
+    /// The kernel resource manager, which admits many users at a time
+    ResourceManager,
+    /// The TPM device itself, which admits a single user
+    Device,
+}
+
+impl std::fmt::Display for Transport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ResourceManager => "resource manager",
+            Self::Device => "device",
+        })
     }
 }
 
