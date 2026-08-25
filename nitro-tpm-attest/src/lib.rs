@@ -32,6 +32,8 @@ pub enum Error {
         tss::message_buffer::PARAMETER_MAX_SIZE
     )]
     ParameterTooLarge { parameter: &'static str },
+    #[error("the owner authorization value is longer than the TPM accepts")]
+    OwnerAuthTooLong,
     #[error("invalid NSM response")]
     InvalidNsmResponse,
     #[error("NSM error response: {0:?}")]
@@ -138,6 +140,8 @@ pub struct AttestationRequest {
     user_data: Option<Vec<u8>>,
     nonce: Option<Vec<u8>>,
     public_key: Option<Vec<u8>>,
+    // Held as an Auth, whose buffer is wiped on drop
+    owner_auth: Option<tss_esapi::structures::Auth>,
 }
 
 impl AttestationRequest {
@@ -189,12 +193,32 @@ impl AttestationRequest {
         Ok(parameter)
     }
 
+    /// Authorization value of the owner hierarchy, which is only needed when one is set on the TPM
+    ///
+    /// The NV index this holds is defined and undefined under the owner hierarchy, so a TPM whose
+    /// owner authorization is not empty rejects those without it. The value travels to the TPM in
+    /// the clear, safe where the wire is not observable.
+    ///
+    /// Errors on a value longer than the TPM accepts for an authorization value, rejecting it here
+    /// rather than at the request. It is held in an [`Auth`](tss_esapi::structures::Auth), which
+    /// wipes its buffer on drop.
+    pub fn owner_auth(mut self, owner_auth: impl Into<Option<Vec<u8>>>) -> Result<Self, Error> {
+        self.owner_auth = owner_auth
+            .into()
+            .map(tss_esapi::structures::Auth::try_from)
+            .transpose()
+            .map_err(|_| Error::OwnerAuthTooLong)?;
+
+        Ok(self)
+    }
+
     /// Request the attestation document from the NitroTPM
     pub fn issue(self) -> Result<Vec<u8>, Error> {
         let Self {
             user_data,
             nonce,
             public_key,
+            owner_auth,
         } = self;
         let nsm_request = nsm_api::Request::Attestation {
             user_data: user_data.map(Into::into),
@@ -224,6 +248,13 @@ impl AttestationRequest {
                 device_path: tpm_resource_manager_device_path.clone(),
                 source,
             })?;
+
+        if let Some(owner_auth) = owner_auth {
+            context.tr_set_auth(
+                tss_esapi::interface_types::resource_handles::Hierarchy::Owner.into(),
+                owner_auth,
+            )?;
+        }
 
         let available = context
             .get_tpm_property(tss_esapi::constants::property_tag::PropertyTag::NvIndexMax)?

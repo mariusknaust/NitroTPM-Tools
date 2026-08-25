@@ -21,6 +21,16 @@ cargo run --package nitro-tpm-attest -- \
     --public-key <public-key-file>
 ```
 
+### Owner authorization
+
+The utility defines and undefines its NV index under the TPM's owner hierarchy, whose authorization value is empty on a NitroTPM by default. If one has been set with `tpm2_changeauth -c owner`, pass the file holding it:
+
+```console
+cargo run --package nitro-tpm-attest -- --owner-auth owner-auth.file
+```
+
+A file is taken rather than an argument value so that its permissions restrict who reads it and it stays out of the process arguments.
+
 ### AWS KMS integration
 
 AWS KMS integration can either be achieved using the AWS SDK or using the AWS CLI, and by attaching the attestation document to the request.
