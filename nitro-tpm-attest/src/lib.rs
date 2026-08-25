@@ -115,92 +115,155 @@ enum OpenErrorKind {
     Tss(#[from] tss_esapi::Error),
 }
 
-/// Request a NitroTPM attestation document
+/// Request a NitroTPM attestation document, carrying the optional user data, nonce and public key
+///
+/// A shorthand for an [`AttestationRequest`] that authorizes with a password session, without
+/// authenticating the TPM. Use the builder for the more advanced options.
 pub fn attestation_document(
+    user_data: impl Into<Option<Vec<u8>>>,
+    nonce: impl Into<Option<Vec<u8>>>,
+    public_key: impl Into<Option<Vec<u8>>>,
+) -> Result<Vec<u8>, Error> {
+    AttestationRequest::new()
+        .user_data(user_data)?
+        .nonce(nonce)?
+        .public_key(public_key)?
+        .issue()
+}
+
+/// A NitroTPM attestation document request, built up from its optional parts
+#[derive(Default)]
+#[must_use = "the request does nothing until `issue` is called"]
+pub struct AttestationRequest {
     user_data: Option<Vec<u8>>,
     nonce: Option<Vec<u8>>,
     public_key: Option<Vec<u8>>,
-) -> Result<Vec<u8>, Error> {
-    for (parameter, name) in [
-        (&user_data, "user data"),
-        (&nonce, "nonce"),
-        (&public_key, "public key"),
-    ] {
+}
+
+impl AttestationRequest {
+    /// A request carrying none of the optional parts
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// User data to include in the attestation document
+    ///
+    /// Errors on a value larger than the NSM accepts, rejecting it here rather than at the request.
+    pub fn user_data(mut self, user_data: impl Into<Option<Vec<u8>>>) -> Result<Self, Error> {
+        self.user_data = Self::accept_attestation_parameter(user_data.into(), "user data")?;
+
+        Ok(self)
+    }
+
+    /// Nonce to include in the attestation document
+    ///
+    /// Errors on a value larger than the NSM accepts, rejecting it here rather than at the request.
+    pub fn nonce(mut self, nonce: impl Into<Option<Vec<u8>>>) -> Result<Self, Error> {
+        self.nonce = Self::accept_attestation_parameter(nonce.into(), "nonce")?;
+
+        Ok(self)
+    }
+
+    /// Public key to include in the attestation document
+    ///
+    /// Errors on a value larger than the NSM accepts, rejecting it here rather than at the request.
+    pub fn public_key(mut self, public_key: impl Into<Option<Vec<u8>>>) -> Result<Self, Error> {
+        self.public_key = Self::accept_attestation_parameter(public_key.into(), "public key")?;
+
+        Ok(self)
+    }
+
+    /// Accepts an optional attestation parameter only when it is within the size the NSM accepts,
+    /// naming it in the error otherwise
+    fn accept_attestation_parameter(
+        parameter: Option<Vec<u8>>,
+        name: &'static str,
+    ) -> Result<Option<Vec<u8>>, Error> {
         if parameter
             .as_ref()
             .is_some_and(|parameter| parameter.len() > tss::message_buffer::PARAMETER_MAX_SIZE)
         {
             return Err(Error::ParameterTooLarge { parameter: name });
         }
+
+        Ok(parameter)
     }
 
-    let nsm_request = nsm_api::Request::Attestation {
-        user_data: user_data.map(Into::into),
-        nonce: nonce.map(Into::into),
-        public_key: public_key.map(Into::into),
-    };
-
-    let tpm_device_path = std::path::PathBuf::from(
-        std::env::var_os("TPM_DEVICE").unwrap_or_else(|| "/dev/tpm0".into()),
-    );
-    let tpm_resource_manager_device_path = std::path::PathBuf::from(
-        std::env::var_os("TPM_RESOURCE_MANAGER_DEVICE")
-            // An empty variable would take the TSS to /dev/tpm0 and open nothing at all for the
-            // vendor command, instead of both going through the resource manager
-            .filter(|path| !path.is_empty())
-            .unwrap_or_else(|| "/dev/tpmrm0".into()),
-    );
-    let mut context = tpm_resource_manager_device_path
-        .to_str()
-        .ok_or(OpenErrorKind::NonUnicodePath)
-        .and_then(|path| {
-            Ok(tss_esapi::Context::new(tss_esapi::TctiNameConf::Device(
-                std::str::FromStr::from_str(path)?,
-            ))?)
-        })
-        .map_err(|source| OpenError {
-            device_path: tpm_resource_manager_device_path.clone(),
-            source,
-        })?;
-
-    let available = context
-        .get_tpm_property(tss_esapi::constants::property_tag::PropertyTag::NvIndexMax)?
-        .and_then(|nv_index_max| usize::try_from(nv_index_max).ok())
-        .ok_or(tss_esapi::Error::WrapperError(
-            tss_esapi::WrapperErrorKind::WrongValueFromTpm,
-        ))?;
-
-    if available < tss::message_buffer::MAX_SIZE {
-        return Err(Error::NvIndexSizeInsufficient {
-            required: tss::message_buffer::MAX_SIZE,
-            available,
-        });
-    }
-
-    context.execute_with_password_auth_session(|context| {
-        let message_buffer = tss::MessageBuffer::from_request(context, &nsm_request)?;
-
-        let send_nsm_request = |device_path| {
-            let mut tpm = raw::Tpm::new(device_path).map_err(|error| OpenError {
-                device_path: device_path.into(),
-                source: error.into(),
-            })?;
-
-            Ok::<_, Error>(tpm.nsm_request(message_buffer.index(), message_buffer.auth())?)
+    /// Request the attestation document from the NitroTPM
+    pub fn issue(self) -> Result<Vec<u8>, Error> {
+        let Self {
+            user_data,
+            nonce,
+            public_key,
+        } = self;
+        let nsm_request = nsm_api::Request::Attestation {
+            user_data: user_data.map(Into::into),
+            nonce: nonce.map(Into::into),
+            public_key: public_key.map(Into::into),
         };
 
-        send_nsm_request(&tpm_resource_manager_device_path).or_else(|error| {
-            if !error.is_unsupported_command() {
-                return Err(error);
-            }
+        let tpm_device_path = std::path::PathBuf::from(
+            std::env::var_os("TPM_DEVICE").unwrap_or_else(|| "/dev/tpm0".into()),
+        );
+        let tpm_resource_manager_device_path = std::path::PathBuf::from(
+            std::env::var_os("TPM_RESOURCE_MANAGER_DEVICE")
+                // An empty variable would take the TSS to /dev/tpm0 and open nothing at all for the
+                // vendor command, instead of both going through the resource manager
+                .filter(|path| !path.is_empty())
+                .unwrap_or_else(|| "/dev/tpmrm0".into()),
+        );
+        let mut context = tpm_resource_manager_device_path
+            .to_str()
+            .ok_or(OpenErrorKind::NonUnicodePath)
+            .and_then(|path| {
+                Ok(tss_esapi::Context::new(tss_esapi::TctiNameConf::Device(
+                    std::str::FromStr::from_str(path)?,
+                ))?)
+            })
+            .map_err(|source| OpenError {
+                device_path: tpm_resource_manager_device_path.clone(),
+                source,
+            })?;
 
-            send_nsm_request(&tpm_device_path)
-        })?;
+        let available = context
+            .get_tpm_property(tss_esapi::constants::property_tag::PropertyTag::NvIndexMax)?
+            .and_then(|nv_index_max| usize::try_from(nv_index_max).ok())
+            .ok_or(tss_esapi::Error::WrapperError(
+                tss_esapi::WrapperErrorKind::WrongValueFromTpm,
+            ))?;
 
-        match message_buffer.into_response()? {
-            nsm_api::Response::Attestation { document } => Ok(document),
-            nsm_api::Response::Error(error_code) => Err(Error::NsmErrorResponse(error_code)),
-            _ => Err(Error::InvalidNsmResponse),
+        if available < tss::message_buffer::MAX_SIZE {
+            return Err(Error::NvIndexSizeInsufficient {
+                required: tss::message_buffer::MAX_SIZE,
+                available,
+            });
         }
-    })
+
+        context.execute_with_password_auth_session(|context| {
+            let message_buffer = tss::MessageBuffer::from_request(context, &nsm_request)?;
+
+            let send_nsm_request = |device_path| {
+                let mut tpm = raw::Tpm::new(device_path).map_err(|error| OpenError {
+                    device_path: device_path.into(),
+                    source: error.into(),
+                })?;
+
+                Ok::<_, Error>(tpm.nsm_request(message_buffer.index(), message_buffer.auth())?)
+            };
+
+            send_nsm_request(&tpm_resource_manager_device_path).or_else(|error| {
+                if !error.is_unsupported_command() {
+                    return Err(error);
+                }
+
+                send_nsm_request(&tpm_device_path)
+            })?;
+
+            match message_buffer.into_response()? {
+                nsm_api::Response::Attestation { document } => Ok(document),
+                nsm_api::Response::Error(error_code) => Err(Error::NsmErrorResponse(error_code)),
+                _ => Err(Error::InvalidNsmResponse),
+            }
+        })
+    }
 }
