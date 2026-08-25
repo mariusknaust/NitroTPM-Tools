@@ -3,7 +3,7 @@
 
 //! Custom functions for the TSS context
 
-pub(super) trait ContextExtension {
+pub(crate) trait ContextExtension {
     /// Find a free handle in the given range
     fn find_free_handle(
         &mut self,
