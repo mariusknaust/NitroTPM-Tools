@@ -27,6 +27,11 @@ pub enum Error {
          {available} per NV index, so EC2 instance attestation is not supported on this TPM"
     )]
     NvIndexSizeInsufficient { required: usize, available: usize },
+    #[error(
+        "the {parameter} is larger than the {} bytes the NSM accepts",
+        tss::message_buffer::PARAMETER_MAX_SIZE
+    )]
+    ParameterTooLarge { parameter: &'static str },
     #[error("invalid NSM response")]
     InvalidNsmResponse,
     #[error("NSM error response: {0:?}")]
@@ -86,6 +91,19 @@ pub fn attestation_document(
     nonce: Option<Vec<u8>>,
     public_key: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, Error> {
+    for (parameter, name) in [
+        (&user_data, "user data"),
+        (&nonce, "nonce"),
+        (&public_key, "public key"),
+    ] {
+        if parameter
+            .as_ref()
+            .is_some_and(|parameter| parameter.len() > tss::message_buffer::PARAMETER_MAX_SIZE)
+        {
+            return Err(Error::ParameterTooLarge { parameter: name });
+        }
+    }
+
     let nsm_request = nsm_api::Request::Attestation {
         user_data: user_data.map(Into::into),
         nonce: nonce.map(Into::into),
