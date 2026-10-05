@@ -43,6 +43,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build --file docker/builder.Dockerfile --tag nitro-tpm-tools-builder .
       - run: docker run --rm --tty --volume cargo-cache:/root/.cargo/registry --volume "$PWD:/mnt" nitro-tpm-tools-builder cargo build --bins --examples --locked
-      - run: readelf -l ./target/debug/nitro-tpm-attest | grep -q "INTERP" && exit 1 || exit 0
-      - run: readelf -l ./target/debug/nitro-tpm-pcr-compute | grep -q "INTERP" && exit 1 || exit 0
-      - run: readelf -l ./target/debug/examples/nitro-tpm-kms-decrypt | grep -q "INTERP" && exit 1 || exit 0
+      - run: readelf --program-headers ./target/debug/nitro-tpm-attest > headers && ! grep INTERP headers
+      - run: readelf --program-headers ./target/debug/nitro-tpm-pcr-compute > headers && ! grep INTERP headers
+      - run: readelf --program-headers ./target/debug/examples/nitro-tpm-kms-decrypt > headers && ! grep INTERP headers
