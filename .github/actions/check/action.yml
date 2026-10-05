@@ -1,5 +1,5 @@
 name: Check
-description: Build, lint and document the workspace
+description: Build, lint, document and package the workspace
 runs:
   using: composite
   steps:
@@ -11,3 +11,5 @@ runs:
       run: cargo fmt --all -- --check
     - shell: bash
       run: cargo doc --no-deps
+    - shell: bash
+      run: cargo package --locked --workspace
