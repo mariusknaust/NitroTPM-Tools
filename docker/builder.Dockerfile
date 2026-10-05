@@ -27,6 +27,7 @@ RUN rm tpm2-tss.tar.gz
 
 WORKDIR /tmp/tpm2-tss
 RUN ./configure \
+    --enable-option-checking=fatal \
     --prefix=/usr/local \
     --disable-shared \
     --enable-nodl \
