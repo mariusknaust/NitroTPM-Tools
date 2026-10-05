@@ -4,32 +4,36 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+defaults:
+  run:
+    shell: bash
 jobs:
-  ci:
+  stable:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - rust_toolchain: stable
-            tpm2_tss_version: "4.1.3"
     steps:
       - uses: actions/checkout@v4
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - id: manifest
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq --raw-output --exit-status '.metadata."tpm2-tss".version')"
+
+          echo "tpm2-tss-version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/tpm2-tss
+        with:
+          version: ${{ steps.manifest.outputs.tpm2-tss-version }}
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{ matrix.rust_toolchain }}-${{ matrix.tpm2_tss_version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: ./.github/actions/tpm2-tss
-        with:
-          version: ${{ matrix.tpm2_tss_version }}
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust_toolchain }}
-          components: clippy, rustfmt
+          key: ${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-tpm2-tss-${{ steps.manifest.outputs.tpm2-tss-version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - uses: ./.github/actions/check
   amazon-linux:
     runs-on: ubuntu-latest
