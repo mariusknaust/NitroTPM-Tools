@@ -13,9 +13,9 @@ jobs:
   stable:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -28,7 +28,7 @@ jobs:
       - uses: ./.github/actions/tpm2-tss
         with:
           version: ${{ steps.manifest.outputs.tpm2-tss-version }}
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -48,10 +48,10 @@ jobs:
       - run: >-
           dnf install --assumeyes --setopt=install_weak_deps=False
           git tar gzip gcc pkgconf-pkg-config openssl-devel rust cargo clippy rustfmt tpm2-tss-devel
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: packages
         run: echo "versions=$(rpm --query --queryformat '%{NAME}-%{VERSION}-%{RELEASE}-' rust tpm2-tss-devel)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -63,7 +63,7 @@ jobs:
   static-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build --file docker/builder.Dockerfile --tag nitro-tpm-tools-builder .
       - run: docker run --rm --tty --volume cargo-cache:/root/.cargo/registry --volume "$PWD:/mnt" nitro-tpm-tools-builder cargo build --bins --examples --locked
       - run: readelf --program-headers ./target/debug/nitro-tpm-attest > headers && ! grep INTERP headers
