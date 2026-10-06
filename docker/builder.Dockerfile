@@ -10,7 +10,7 @@ RUN apk add --no-cache \
 
 WORKDIR /tmp
 ARG TPM2_TSS_VERSION=4.1.3
-RUN curl --location "https://github.com/tpm2-software/tpm2-tss/releases/download/${TPM2_TSS_VERSION}/tpm2-tss-${TPM2_TSS_VERSION}.tar.gz" --output tpm2-tss-${TPM2_TSS_VERSION}.tar.gz
+RUN curl --location --fail "https://github.com/tpm2-software/tpm2-tss/releases/download/${TPM2_TSS_VERSION}/tpm2-tss-${TPM2_TSS_VERSION}.tar.gz" --output tpm2-tss-${TPM2_TSS_VERSION}.tar.gz
 RUN tar xz --file tpm2-tss-${TPM2_TSS_VERSION}.tar.gz
 RUN rm tpm2-tss-${TPM2_TSS_VERSION}.tar.gz
 
