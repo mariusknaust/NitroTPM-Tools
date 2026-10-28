@@ -4,6 +4,9 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+defaults:
+  run:
+    shell: bash
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
@@ -21,6 +24,15 @@ jobs:
           version="$(rustc --version)"
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - id: manifest
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq --raw-output --exit-status '.metadata."tpm2-tss".version')"
+
+          echo "tpm2-tss-version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/tpm2-tss
+        with:
+          version: ${{ steps.manifest.outputs.tpm2-tss-version }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -28,10 +40,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{ steps.toolchain.outputs.version }}-tpm2-tss-4.1.3-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: ./.github/actions/tpm2-tss
-        with:
-          version: "4.1.3"
+          key: ${{ runner.os }}-${{ steps.toolchain.outputs.version }}-tpm2-tss-${{ steps.manifest.outputs.tpm2-tss-version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - uses: ./.github/actions/check
   amazon-linux:
     runs-on: ubuntu-latest
