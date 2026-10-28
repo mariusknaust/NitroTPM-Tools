@@ -5,16 +5,8 @@ on:
   pull_request:
     branches: [ "main" ]
 jobs:
-  ci:
+  stable:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - rust_toolchain: stable
-            tpm2_tss_version: "4.1.3"
-          # AL2023 dependency versions
-          - rust_toolchain: "1.93"
-            tpm2_tss_version: "4.0.2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -25,14 +17,37 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{ matrix.rust_toolchain }}-${{ matrix.tpm2_tss_version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-rust-stable-tpm2-tss-4.1.3-cargo-${{ hashFiles('**/Cargo.lock') }}
       - uses: ./.github/actions/tpm2-tss
         with:
-          version: ${{ matrix.tpm2_tss_version }}
+          version: "4.1.3"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust_toolchain }}
+          toolchain: stable
           components: clippy, rustfmt
+      - uses: ./.github/actions/check
+  amazon-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [ "2023", "2027" ]
+    container: amazonlinux:${{ matrix.version }}
+    steps:
+      - run: >-
+          dnf install --assumeyes --setopt=install_weak_deps=False
+          git tar gzip gcc pkgconf-pkg-config openssl-devel rust cargo clippy rustfmt tpm2-tss-devel
+      - uses: actions/checkout@v4
+      - id: packages
+        run: echo "versions=$(rpm --query --queryformat '%{NAME}-%{VERSION}-%{RELEASE}-' rust tpm2-tss-devel)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: amazon-linux-${{ matrix.version }}-${{ steps.packages.outputs.versions }}cargo-${{ hashFiles('**/Cargo.lock') }}
       - uses: ./.github/actions/check
   static-build:
     runs-on: ubuntu-latest
